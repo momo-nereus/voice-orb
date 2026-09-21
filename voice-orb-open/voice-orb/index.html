@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>VOICE ORB · 余音栖于此处</title>
+<!--
+VOICE ORB 纯静态单页 v2
+⚠️ 重要备注：
+1. 本地双击打开 html，浏览器安全策略会拦截麦克风（getUserMedia 需 HTTPS）。部署到静态托管（GitHub Pages/Vercel/Netlify/Cloudflare Pages）获得 HTTPS 链接后，手机电脑浏览器才能正常调用麦克风。
+2. 本地音频导入，本地打开或线上访问都能正常使用，全程浏览器本地解析，不上传任何服务器。
+3. 零后端、零接口请求、零外部依赖，全部 Web 标准 API。
+v2 改动：外框稳定不跳、光晕整体扩散、深炭灰雾感、信号强阻尼、新增光晕扩散/信号阻尼两个滑块。
+-->
+<style>
+:root{--ink:#3a3a3a;--ink-soft:#9a9a9a;--ink-faint:#c4c4c4;--line:#e5e5e5;--orb-size:300px;--orb-blur:16px;--breath-amp:0.02;--audio-sens:1;--halo-spread:1;--damping:10;--serif:Georgia,'Songti SC','SimSun','Times New Roman',serif;--sans:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{margin:0;background:#fff;color:var(--ink);font-family:var(--sans);display:flex;flex-direction:column;overflow:hidden}
+header{text-align:center;padding:22px 16px 4px;font-family:var(--serif);font-size:13px;font-weight:200;letter-spacing:.55em;text-indent:.55em;color:var(--ink-soft);user-select:none}
+main{flex:1;display:flex;flex-direction:column;min-height:0}
+.orb-zone{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
+#orbWrap{position:relative;width:min(var(--orb-size),86vw,52vh);height:min(var(--orb-size),86vw,52vh);filter:blur(var(--orb-blur));will-change:filter}
+#orb{position:absolute;inset:0;width:100%;height:100%;display:block}
+.tags{text-align:center;padding:6px 16px 10px;font-family:var(--serif);font-weight:200;color:var(--ink-faint);user-select:none}
+.tags .en{font-size:13px;letter-spacing:.32em;text-indent:.32em;margin-bottom:5px}
+.tags .zh{font-size:11px;letter-spacing:.5em;text-indent:.5em}
+.status{text-align:center;font-size:11px;letter-spacing:.18em;color:var(--ink-faint);min-height:16px;padding:2px 12px 8px;transition:color .3s}
+.status.live{color:var(--ink-soft)}
+footer{background:rgba(255,255,255,.92);border-top:1px solid var(--line);padding:8px 12px calc(10px + env(safe-area-inset-bottom));z-index:5}
+.mode-tabs{display:flex;gap:8px}
+.mode-tabs button{flex:1;min-height:46px;border:1px solid var(--line);background:transparent;color:var(--ink-soft);font-size:13px;letter-spacing:.12em;border-radius:14px;cursor:pointer;font-family:var(--sans);transition:all .25s}
+.mode-tabs button:active{transform:scale(.97)}
+.mode-tabs button.active{background:#1a1a1a;border-color:#1a1a1a;color:#fff}
+.mode-tabs .gear{flex:0 0 46px;font-size:17px;line-height:1}
+.panel{display:none;padding:10px 2px 4px;min-height:108px}
+.panel.show{display:block}
+.row{display:flex;align-items:center;gap:10px;margin-top:10px}
+.btn{min-height:42px;padding:0 18px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--ink);font-size:13px;letter-spacing:.1em;cursor:pointer;white-space:nowrap;transition:all .2s;font-family:var(--sans)}
+.btn:active{transform:scale(.97)}
+.btn.solid{background:#1a1a1a;border-color:#1a1a1a;color:#fff}
+.file-name{flex:1;font-size:12px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.progress-row{display:flex;align-items:center;gap:10px;margin-top:12px}
+.progress-row .time{font-size:11px;color:var(--ink-faint);min-width:34px;text-align:center;font-variant-numeric:tabular-nums}
+input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:2px;background:var(--line);border-radius:2px;outline:none;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#fff;border:1.5px solid #1a1a1a;box-shadow:0 1px 3px rgba(0,0,0,.15);cursor:pointer}
+#settings{position:fixed;left:12px;right:12px;bottom:calc(96px + env(safe-area-inset-bottom));background:rgba(255,255,255,.94);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,.08);padding:16px 18px;z-index:20;transform:translateY(130%);opacity:0;pointer-events:none;transition:transform .35s cubic-bezier(.22,1,.36,1),opacity .3s}
+#settings.open{transform:translateY(0);opacity:1;pointer-events:auto}
+#settings h3{margin:0 0 12px;font-family:var(--serif);font-weight:200;font-size:13px;letter-spacing:.3em;color:var(--ink-soft);text-align:center}
+.ctrl{display:grid;grid-template-columns:74px 1fr 38px;align-items:center;gap:10px;margin-bottom:12px}
+.ctrl:last-child{margin-bottom:0}
+.ctrl label{font-size:12px;color:var(--ink-soft);letter-spacing:.06em}
+.ctrl .val{font-size:11px;color:var(--ink-faint);text-align:right;font-variant-numeric:tabular-nums}
+@media(min-width:700px){header{font-size:15px;padding-top:30px}.tags .en{font-size:15px}.tags .zh{font-size:12px}#settings{left:50%;right:auto;width:380px;transform:translate(-50%,140%)}#settings.open{transform:translate(-50%,0)}.mode-tabs button{min-height:50px;font-size:14px}}
+</style>
+</head>
+<body>
+<header>VOICE ORB</header>
+<main>
+<div class="orb-zone"><div id="orbWrap"><canvas id="orb"></canvas></div></div>
+<div class="tags"><div class="en">Where voices linger</div><div class="zh">余音栖于此处</div></div>
+<div class="status" id="status">无声 · 呼吸</div>
+</main>
+<footer>
+<div class="mode-tabs">
+<button id="tabMic">麦克风</button><button id="tabFile">音频</button><button class="gear" id="gear">⚙</button>
+</div>
+<div class="panel" id="panelMic">
+<div class="row"><button class="btn solid" id="micBtn">开启麦克风</button><div class="file-name" id="micHint">需要 HTTPS 才能调用（部署后生效）</div></div>
+</div>
+<div class="panel" id="panelFile">
+<div class="row"><button class="btn solid" id="filePick">选择音频</button><button class="btn" id="filePlay">▶</button><div class="file-name" id="fileName">未选择音频文件</div></div>
+<div class="progress-row"><span class="time" id="curTime">0:00</span><input type="range" id="seek" min="0" max="1000" value="0"><span class="time" id="totTime">0:00</span></div>
+<input type="file" id="fileInput" accept="audio/*" hidden>
+</div>
+</footer>
+<div id="settings">
+<h3>调节</h3>
+<div class="ctrl"><label>球体尺寸</label><input type="range" id="sSize" min="40" max="100" value="70"><span class="val" id="vSize">70%</span></div>
+<div class="ctrl"><label>模糊强度</label><input type="range" id="sBlur" min="0" max="60" value="16"><span class="val" id="vBlur">16px</span></div>
+<div class="ctrl"><label>呼吸幅度</label><input type="range" id="sBreath" min="0" max="10" value="2"><span class="val" id="vBreath">0.02</span></div>
+<div class="ctrl"><label>音频灵敏度</label><input type="range" id="sSens" min="20" max="300" value="100"><span class="val" id="vSens">1.0</span></div>
+<div class="ctrl"><label>光晕扩散</label><input type="range" id="sHalo" min="20" max="250" value="100"><span class="val" id="vHalo">1.0</span></div>
+<div class="ctrl"><label>信号阻尼</label><input type="range" id="sDamp" min="2" max="40" value="10"><span class="val" id="vDamp">10</span></div>
+</div>
+<script>
+(function(){
+'use strict';
+var wrap=document.getElementById('orbWrap'),canvas=document.getElementById('orb'),ctx=canvas.getContext('2d'),statusEl=document.getElementById('status'),root=document.documentElement;
+var params={size:.7,blur:16,breath:.02,sens:1,halo:1,damp:10};
+function setVar(n,v){root.style.setProperty(n,v)}
+function syncCss(){setVar('--orb-size',Math.round(300*(.5+params.size))+'px');setVar('--orb-blur',params.blur.toFixed(1)+'px');setVar('--breath-amp',params.breath.toFixed(3));setVar('--audio-sens',params.sens.toFixed(2));setVar('--halo-spread',params.halo.toFixed(2));setVar('--damping',params.damp.toFixed(0))}
+var DPR=1,cw=0,ch=0;
+function resize(){DPR=Math.min(window.devicePixelRatio||1,2);cw=wrap.clientWidth;ch=wrap.clientHeight;canvas.width=Math.round(cw*DPR);canvas.height=Math.round(ch*DPR);ctx.setTransform(DPR,0,0,DPR,0,0)}
+window.addEventListener('resize',resize);setTimeout(resize,0);
+var AC=window.AudioContext||window.webkitAudioContext,audioCtx=null,analyser=null,freqData=null;
+function ensureAudio(){if(!audioCtx){audioCtx=new AC();analyser=audioCtx.createAnalyser();analyser.fftSize=512;analyser.smoothingTimeConstant=.85;freqData=new Uint8Array(analyser.frequencyBinCount)}if(audioCtx.state==='suspended')audioCtx.resume()}
+var activeSource=null,micStream=null,micOn=false;
+function setActiveSource(node){if(activeSource){try{activeSource.disconnect()}catch(e){}}activeSource=node}
+var micBtn=document.getElementById('micBtn'),micHint=document.getElementById('micHint');
+function startMic(){navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){ensureAudio();micStream=stream;setActiveSource(audioCtx.createMediaStreamSource(stream));micOn=true;micBtn.textContent='停止麦克风';micHint.textContent='聆听中…';statusEl.textContent='正在聆听…';statusEl.classList.add('live')}).catch(function(err){micHint.textContent='无法调用麦克风：'+(err&&err.name?err.name:'未知')})}
+function stopMic(){if(micStream){micStream.getTracks().forEach(function(t){t.stop()});micStream=null}setActiveSource(null);micOn=false;micBtn.textContent='开启麦克风';micHint.textContent='需要 HTTPS 才能调用（部署后生效）';statusEl.textContent='无声 · 呼吸';statusEl.classList.remove('live')}
+micBtn.addEventListener('click',function(){if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){micHint.textContent='当前浏览器不支持，请换 Chrome/Safari/Edge';return}if(micOn)stopMic();else{ensureAudio();startMic()}});
+var audioEl=new Audio();audioEl.preload='auto';var mediaSrcMade=false;
+var fileBtn=document.getElementById('filePick'),playBtn=document.getElementById('filePlay'),fileNameEl=document.getElementById('fileName'),fileInput=document.getElementById('fileInput'),seek=document.getElementById('seek'),curTimeEl=document.getElementById('curTime'),totTimeEl=document.getElementById('totTime'),haveFile=false;
+function fmt(s){if(!isFinite(s)||s<0)s=0;var m=Math.floor(s/60),sec=Math.floor(s%60);return m+':'+(sec<10?'0':'')+sec}
+fileBtn.addEventListener('click',function(){fileInput.click()});
+fileInput.addEventListener('change',function(){var f=fileInput.files&&fileInput.files[0];if(!f)return;stopMic();ensureAudio();if(!mediaSrcMade){var src=audioCtx.createMediaElementSource(audioEl);src.connect(analyser);src.connect(audioCtx.destination);mediaSrcMade=true}setActiveSource(audioEl);if(audioEl.src)URL.revokeObjectURL(audioEl.src);audioEl.src=URL.createObjectURL(f);audioEl.load();audioEl.play();haveFile=true;fileNameEl.textContent=f.name;playBtn.textContent='⏸';statusEl.textContent='播放中 · '+f.name;statusEl.classList.add('live')});
+playBtn.addEventListener('click',function(){if(!haveFile)return;if(audioEl.paused){ensureAudio();audioEl.play();playBtn.textContent='⏸';statusEl.textContent='播放中 · '+(fileNameEl.textContent||'');statusEl.classList.add('live')}else{audioEl.pause();playBtn.textContent='▶';statusEl.textContent='已暂停';statusEl.classList.remove('live')}});
+audioEl.addEventListener('ended',function(){playBtn.textContent='▶';statusEl.textContent='播放结束';statusEl.classList.remove('live')});
+audioEl.addEventListener('timeupdate',function(){if(audioEl.duration){seek.value=(audioEl.currentTime/audioEl.duration*1000)|0;curTimeEl.textContent=fmt(audioEl.currentTime);totTimeEl.textContent=fmt(audioEl.duration)}});
+seek.addEventListener('input',function(){if(audioEl.duration)audioEl.currentTime=seek.value/1000*audioEl.duration});
+function pauseFile(){if(haveFile&&!audioEl.paused){audioEl.pause();playBtn.textContent='▶'}}
+var tabs={mic:document.getElementById('tabMic'),file:document.getElementById('tabFile')};
+var panels={mic:document.getElementById('panelMic'),file:document.getElementById('panelFile')};
+function setMode(mode){Object.keys(tabs).forEach(function(k){tabs[k].classList.toggle('active',k===mode);panels[k].classList.toggle('show',k===mode)})}
+tabs.mic.addEventListener('click',function(){setMode('mic')});tabs.file.addEventListener('click',function(){setMode('file')});setMode('mic');
+var gear=document.getElementById('gear'),settings=document.getElementById('settings');
+gear.addEventListener('click',function(){var open=settings.classList.toggle('open');gear.classList.toggle('active',open)});
+function bindSlider(id,valId,key,fmtFn,mapFn){var el=document.getElementById(id),valEl=document.getElementById(valId);function apply(){params[key]=mapFn(parseFloat(el.value));valEl.textContent=fmtFn(params[key]);syncCss()}el.addEventListener('input',apply);apply()}
+bindSlider('sSize','vSize','size',function(v){return Math.round(v*100)+'%'},function(v){return v/100});
+bindSlider('sBlur','vBlur','blur',function(v){return v.toFixed(0)+'px'},function(v){return v});
+bindSlider('sBreath','vBreath','breath',function(v){return v.toFixed(2)},function(v){return v/100});
+bindSlider('sSens','vSens','sens',function(v){return v.toFixed(1)},function(v){return v/100});
+bindSlider('sHalo','vHalo','halo',function(v){return v.toFixed(1)},function(v){return v/100});
+bindSlider('sDamp','vDamp','damp',function(v){return v.toFixed(0)},function(v){return v});
+syncCss();
+function getEnergy(){if(activeSource&&audioCtx){analyser.getByteFrequencyData(freqData);var sum=0,n=freqData.length,i;for(i=0;i<n;i++)sum+=freqData[i];var avg=sum/n/255,peak=0;for(var j=0;j<n;j+=16){if(freqData[j]>peak)peak=freqData[j]}peak/=255;var e2=avg*.7+peak*.3;return Math.min(1,e2*params.sens*2.2)}return 0}
+var particles=[];for(var p=0;p<44;p++){particles.push({a:Math.random()*Math.PI*2,spd:(Math.random()-.5)*.2,r:Math.random(),size:.7+Math.random()*1.6,alpha:.05+Math.random()*.13})}
+var scale=1,blurNow=params.blur,rawE=0,eSmooth=0,eSlow=0,dampFactor=.05;
+var sfreq=new Uint8Array(256);
+function getDamp(){return .5/Math.max(1,params.damp)}
+function draw(){
+var t=performance.now()/1000;
+rawE=getEnergy();dampFactor=getDamp();
+eSmooth+=(rawE-eSmooth)*dampFactor;
+eSlow+=(eSmooth-eSlow)*.28;
+var energy=eSmooth;
+var breathe=1+Math.sin(t*1.4)*params.breath;
+scale+=(breathe-scale)*.06;
+var targetBlur=params.blur*(1+eSlow*.8);
+blurNow+=(targetBlur-blurNow)*.08;
+wrap.style.filter='blur('+blurNow.toFixed(1)+'px)';
+ctx.clearRect(0,0,cw,ch);
+if(cw<1||ch<1){requestAnimationFrame(draw);return}
+var cx=cw/2,cy=ch/2+Math.sin(t*.8)*cw*.015;
+var R=Math.min(cw,ch)*.34*params.size*(.5+params.size)*scale;
+var spread=1+eSlow*params.halo;
+var g0=ctx.createRadialGradient(cx,cy,R*.3,cx,cy,R*(1.9*spread));
+g0.addColorStop(0,'rgba(12,12,12,'+(.07+eSlow*.13)+')');
+g0.addColorStop(.5,'rgba(12,12,12,'+(.035+eSlow*.065)+')');
+g0.addColorStop(1,'rgba(12,12,12,0)');
+ctx.fillStyle=g0;ctx.beginPath();ctx.arc(cx,cy,R*(1.9*spread),0,Math.PI*2);ctx.fill();
+var g1=ctx.createRadialGradient(cx,cy,R*.02,cx,cy,R*1.05);
+g1.addColorStop(0,'rgba(12,12,12,'+(.36+eSlow*.20)+')');
+g1.addColorStop(.42,'rgba(18,18,18,'+(.24+eSlow*.16)+')');
+g1.addColorStop(.78,'rgba(10,10,10,'+(.10+eSlow*.09)+')');
+g1.addColorStop(1,'rgba(0,0,0,0)');
+ctx.fillStyle=g1;ctx.beginPath();ctx.arc(cx,cy,R,0,Math.PI*2);ctx.fill();
+var swirl=Math.sin(t*.7+energy*4)*.04+energy*.14;
+var g2=ctx.createRadialGradient(cx+R*.1,cy-R*.12,R*.05,cx,cy,R*.8);
+g2.addColorStop(0,'rgba(60,60,60,'+(.06+swirl)+')');
+g2.addColorStop(.55,'rgba(35,35,35,'+(.05+energy*.10)+')');
+g2.addColorStop(1,'rgba(20,20,20,0)');
+ctx.fillStyle=g2;ctx.beginPath();ctx.arc(cx,cy,R,0,Math.PI*2);ctx.fill();
+if(eSlow>.03){
+var wr=R*(.5+eSlow*1.1*params.halo);
+var gw=ctx.createRadialGradient(cx,cy,wr*.6,cx,cy,wr);
+gw.addColorStop(0,'rgba(40,40,40,'+(eSlow*.06)+')');
+gw.addColorStop(1,'rgba(40,40,40,0)');
+ctx.fillStyle=gw;ctx.beginPath();ctx.arc(cx,cy,wr,0,Math.PI*2);ctx.fill();
+ctx.strokeStyle='rgba(80,80,80,'+(eSlow*.12).toFixed(3)+')';
+ctx.lineWidth=1+energy*2;
+ctx.beginPath();ctx.arc(cx,cy,wr*.92,0,Math.PI*2);ctx.stroke();
+}
+if(activeSource&&audioCtx){
+analyser.getByteFrequencyData(freqData);
+var fl=freqData.length;
+for(var fi=0;fi<fl;fi++)sfreq[fi]+=(freqData[fi]-sfreq[fi])*.25;
+var bins=48;
+for(var ii=0;ii<bins;ii++){
+var v=sfreq[ii]/255;
+if(v<.03)continue;
+var ang=ii/bins*Math.PI*2;
+var sl=R*(.35+v*.55);
+ctx.strokeStyle='rgba(190,190,190,'+(.02+v*.09+energy*.05).toFixed(3)+')';
+ctx.lineWidth=.8+v*1.2;
+ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(ang)*sl,cy+Math.sin(ang)*sl);ctx.stroke();
+}
+}
+var k;
+for(k=0;k<particles.length;k++){
+var pt=particles[k],a=pt.a+t*pt.spd,rad=R*(.25+pt.r*.6)*(1+eSlow*.9*params.halo);
+ctx.fillStyle='rgba(90,90,90,'+pt.alpha.toFixed(3)+')';
+ctx.beginPath();ctx.arc(cx+Math.cos(a)*rad,cy+Math.sin(a)*rad*.9,pt.size,0,Math.PI*2);ctx.fill();
+}
+var gH=ctx.createRadialGradient(cx-R*.3,cy-R*.35,0,cx-R*.3,cy-R*.35,R*.7);
+gH.addColorStop(0,'rgba(255,255,255,'+(.07+energy*.05)+')');
+gH.addColorStop(1,'rgba(255,255,255,0)');
+ctx.fillStyle=gH;ctx.beginPath();ctx.arc(cx,cy,R,0,Math.PI*2);ctx.fill();
+requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>

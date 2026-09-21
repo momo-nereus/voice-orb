@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>VOICE ORB · 语音通话</title>
+<!--
+VOICE ORB · 语音通话页
+
+纯静态单页：零依赖、零构建、零后端，只需要一个你自己的 API Key。
+说话 -> 浏览器识别 -> 请求你填的接口 -> 朗读回答，球体全程跟着声音动。
+
+界面：静音 / 私密模式 / 扬声器 / 挂断 / 实时字幕。
+  · 静音  —— 关掉麦克风，改用底部的输入框打字；再点一次恢复说话。
+  · 私密模式 —— 把环境的音量与音高特征一起交给模型（默认关闭）。
+  · 扬声器 —— 关掉就不朗读了，只显示字幕。
+
+麦克风需要 HTTPS：getUserMedia 与 SpeechRecognition 只在 https 或 localhost 下可用，
+本地双击打开 html 时麦克风一定失败，这是浏览器的安全策略，不是页面坏了。
+-->
+<style>
+#voiceOverlay{position:fixed;inset:0;z-index:300;background:#fff;display:none;flex-direction:column;overflow:hidden;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+#voiceOverlay.open{display:flex}
+#voiceOverlay .vo-head{text-align:center;padding:calc(20px + env(safe-area-inset-top)) 16px 4px;font-family:Georgia,"Songti SC","SimSun",serif;font-size:13px;font-weight:200;letter-spacing:.55em;text-indent:.55em;color:#9a9a9a;user-select:none}
+#voiceOverlay .vo-back{position:absolute;top:calc(12px + env(safe-area-inset-top));left:12px;width:34px;height:34px;border:1px solid #e5e5e5;border-radius:50%;background:rgba(255,255,255,.8);color:#9a9a9a;display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;z-index:5}
+#voiceOverlay .vo-back:active{transform:scale(.92)}
+#voiceOverlay .vo-zone{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
+#voiceOverlay .vo-orbwrap{position:relative;width:min(300px,86vw,52vh);height:min(300px,86vw,52vh);filter:blur(16px)}
+#voiceOverlay .vo-orbwrap canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#voiceOverlay .vo-tags{text-align:center;padding:6px 16px 10px;font-family:Georgia,"Songti SC",serif;font-weight:200;color:#c4c4c4;user-select:none}
+#voiceOverlay .vo-tags .en{font-size:13px;letter-spacing:.32em;text-indent:.32em;margin-bottom:5px}
+#voiceOverlay .vo-tags .zh{font-size:11px;letter-spacing:.5em;text-indent:.5em}
+#voiceOverlay .vo-capwrap{text-align:center;padding:2px 26px 6px;min-height:58px;opacity:0;transform:translateY(6px);transition:opacity .45s ease,transform .45s ease;user-select:none}
+#voiceOverlay .vo-capwrap.show{opacity:1;transform:translateY(0)}
+#voiceOverlay .vo-clabel{font-size:9px;letter-spacing:.4em;text-indent:.4em;color:#c4c4c4;margin-bottom:7px}
+#voiceOverlay .vo-ctext{font-family:Georgia,"Songti SC",serif;font-style:italic;font-weight:300;font-size:19px;line-height:1.55;color:#262626;word-break:break-word}
+#voiceOverlay .vo-ctext:not(:empty):before{content:"\201c";color:#c4c4c4;margin-right:1px}
+#voiceOverlay .vo-ctext:not(:empty):after{content:"\201d";color:#c4c4c4;margin-left:1px}
+#voiceOverlay .vo-status{text-align:center;font-size:11px;letter-spacing:.18em;color:#c4c4c4;min-height:16px;padding:2px 12px 8px;transition:color .3s}
+#voiceOverlay .vo-status.live{color:#9a9a9a}
+#voiceOverlay .vo-inputbar{display:none;align-items:center;gap:8px;padding:0 22px 10px;max-width:420px;margin:0 auto;width:100%}
+#voiceOverlay .vo-inputbar.show{display:flex}
+#voiceOverlay .vo-input{flex:1;min-width:0;height:38px;border:1px solid #e8e8e8;border-radius:19px;background:#fbfbfb;padding:0 14px;font-size:14px;color:#262626;outline:none;font-family:inherit}
+#voiceOverlay .vo-input::placeholder{color:#c8c8c8}
+#voiceOverlay .vo-input:focus{border-color:#d0d0d0;background:#fff}
+#voiceOverlay .vo-send{width:38px;height:38px;flex:0 0 38px;border:none;border-radius:50%;background:#f0f0f0;color:#c8c8c8;font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .22s;cursor:default}
+#voiceOverlay .vo-send.on{background:#1a1a1a;color:#fff;cursor:pointer}
+#voiceOverlay .vo-foot{background:rgba(255,255,255,.95);border-top:1px solid #e5e5e5;padding:16px 20px calc(18px + env(safe-area-inset-bottom));display:flex;flex-direction:column;align-items:center;gap:18px}
+#voiceOverlay .vo-ctrls{display:flex;justify-content:center;gap:10px;width:100%;max-width:360px}
+#voiceOverlay .vo-ibtn{display:flex;flex-direction:column;align-items:center;gap:7px;background:none;border:none;color:#9a9a9a;font-size:10.5px;cursor:pointer;flex:1;padding:0;font-family:inherit}
+#voiceOverlay .vo-ibtn .cir{width:50px;height:50px;margin:0 auto;border-radius:50%;border:1px solid #e5e5e5;display:flex;align-items:center;justify-content:center;transition:all .25s;background:#fff;color:inherit}
+#voiceOverlay .vo-ibtn:active .cir{transform:scale(.93)}
+#voiceOverlay .vo-ibtn.active{color:#1a1a1a}
+#voiceOverlay .vo-ibtn.active .cir{background:#1a1a1a;border-color:#1a1a1a;color:#fff}
+#voiceOverlay .vo-ibtn svg{width:19px;height:19px;display:block}
+#voiceOverlay .vo-toggle{width:64px;height:64px;border-radius:50%;border:none;background:#1a1a1a;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 10px 26px rgba(0,0,0,.2);transition:background .3s,transform .2s}
+#voiceOverlay .vo-toggle.active{background:#a24a41}
+#voiceOverlay .vo-toggle:active{transform:scale(.95)}
+#voiceOverlay .vo-toggle svg{width:25px;height:25px;transition:transform .35s ease}
+#voiceOverlay .vo-toggle.active svg{transform:rotate(133deg)}
+
+html,body{height:100%}
+body{margin:0;background:#fff;overflow:hidden;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-tap-highlight-color:transparent}
+#voiceOverlay{display:flex}
+.vo-gear{position:absolute;top:calc(12px + env(safe-area-inset-top));right:12px;width:34px;height:34px;border:1px solid #e5e5e5;border-radius:50%;background:rgba(255,255,255,.8);color:#9a9a9a;display:flex;align-items:center;justify-content:center;font-size:15px;cursor:pointer;z-index:6}
+.vo-gear:active{transform:scale(.92)}
+#voSettings{position:fixed;left:12px;right:12px;bottom:12px;max-height:78vh;overflow-y:auto;background:rgba(255,255,255,.98);border:1px solid #e5e5e5;border-radius:18px;box-shadow:0 14px 44px rgba(0,0,0,.13);padding:18px;z-index:400;transform:translateY(140%);opacity:0;pointer-events:none;transition:transform .35s cubic-bezier(.22,1,.36,1),opacity .3s}
+#voSettings.open{transform:translateY(0);opacity:1;pointer-events:auto}
+#voSettings h3{margin:0 0 6px;font-family:Georgia,"Songti SC",serif;font-weight:200;font-size:13px;letter-spacing:.3em;color:#9a9a9a;text-align:center}
+#voSettings .vo-sub{font-size:11px;color:#c4c4c4;text-align:center;line-height:1.7;margin-bottom:14px}
+.vo-field{margin-bottom:13px}
+.vo-field label{display:block;font-size:12px;color:#9a9a9a;letter-spacing:.06em;margin-bottom:6px}
+.vo-field input[type=text],.vo-field input[type=password],.vo-field textarea{width:100%;border:1px solid #e9e9e9;border-radius:11px;padding:10px 12px;font-size:13px;color:#262626;background:#fff;outline:none;font-family:inherit;resize:vertical}
+.vo-field textarea{min-height:70px;line-height:1.6}
+.vo-field input:focus,.vo-field textarea:focus{border-color:#c9c9c9}
+.vo-rate{display:grid;grid-template-columns:1fr 46px;align-items:center;gap:10px}
+.vo-rate span{font-size:11px;color:#c4c4c4;text-align:right;font-variant-numeric:tabular-nums}
+.vo-field input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:2px;background:#e9e9e9;border-radius:2px;outline:none;cursor:pointer}
+.vo-field input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#fff;border:1.5px solid #1a1a1a;box-shadow:0 1px 3px rgba(0,0,0,.15);cursor:pointer}
+.vo-actions{display:flex;gap:8px;margin-top:6px}
+.vo-actions button{flex:1;min-height:42px;border-radius:12px;border:1px solid #e9e9e9;background:transparent;color:#262626;font-size:13px;cursor:pointer;font-family:inherit}
+.vo-actions #voSave{background:#1a1a1a;border-color:#1a1a1a;color:#fff}
+@media(min-width:760px){#voSettings{left:50%;right:auto;width:420px;margin-left:-210px}}
+</style>
+</head>
+<body>
+<div id="voiceOverlay">
+    <button class="vo-back" id="voBackBtn" title="返回">←</button>
+    <div class="vo-head">VOICE ORB</div>
+    <div class="vo-zone"><div class="vo-orbwrap"><canvas id="voOrb"></canvas></div></div>
+    <div class="vo-tags"><div class="en">Where voices linger</div><div class="zh">余音栖于此处</div></div>
+    <div class="vo-capwrap" id="voCapWrap"><div class="vo-clabel">实时字幕 · LIVE</div><div class="vo-ctext" id="voCaption"></div></div>
+    <div class="vo-status" id="voStatus">无声 · 呼吸</div>
+    <div class="vo-inputbar" id="voInputBar">
+        <input class="vo-input" id="voInput" type="text" placeholder="打字或说话…" autocomplete="off">
+        <button class="vo-send" id="voSendBtn" title="发送">↑</button>
+    </div>
+    <div class="vo-foot">
+        <div class="vo-ctrls">
+            <button class="vo-ibtn" id="voMuteBtn"><span class="cir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg></span><span>静音</span></button>
+            <button class="vo-ibtn" id="voPrivBtn"><span class="cir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span><span>私密模式</span></button>
+            <button class="vo-ibtn" id="voSpkBtn"><span class="cir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4Z"/><path d="M17 8a5 5 0 0 1 0 8"/><path d="M19.5 5.5a9 9 0 0 1 0 13"/></svg></span><span>扬声器</span></button>
+        </div>
+        <button class="vo-toggle" id="voCallBtn"><svg  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1.1-.3 1.2.4 2.5.6 3.8.6.6 0 1.1.5 1.1 1.1V20c0 .6-.5 1.1-1.1 1.1C10.7 21.1 3 13.4 3 4.1 3 3.5 3.5 3 4.1 3h3.4c.6 0 1.1.5 1.1 1.1 0 1.3.2 2.6.6 3.8.1.4 0 .8-.3 1.1L6.6 10.8Z"/></svg></button>
+    </div>
+</div>
+<button class="vo-gear" id="voGear" title="设置">⚙</button>
+
+<div id="voSettings">
+  <h3>设置</h3>
+  <div class="vo-sub">Key 只存在这台设备的浏览器里<br>请求由浏览器直接发往你填的地址</div>
+  <div class="vo-field"><label>API 地址（OpenAI 兼容）</label><input type="text" id="voBase" placeholder="https://api.deepseek.com/v1"></div>
+  <div class="vo-field"><label>API Key</label><input type="password" id="voKey" placeholder="sk-..."></div>
+  <div class="vo-field"><label>模型名</label><input type="text" id="voModel" placeholder="deepseek-chat"></div>
+  <div class="vo-field"><label>人设提示词（留空则使用默认）</label><textarea id="voSys" placeholder="例：回答简短口语化，适合朗读"></textarea></div>
+  <div class="vo-field"><label>语速</label><div class="vo-rate"><input type="range" id="voRate" min="50" max="180" value="100"><span id="voRateVal">1.00</span></div></div>
+  <div class="vo-actions"><button id="voClose">关闭</button><button id="voSave">保存</button></div>
+</div>
+<script>
+/* ============ 语音通话 · 逻辑 ============ */
+(function () {
+    "use strict";
+    function __voBoot() {
+    var ov = document.getElementById("voiceOverlay");
+    if (!ov) return;
+    var canvas = document.getElementById("voOrb");
+    var ctx = canvas.getContext("2d");
+    var statusEl = document.getElementById("voStatus");
+    var capEl = document.getElementById("voCaption");
+    var capWrap = document.getElementById("voCapWrap");
+    var callBtn = document.getElementById("voCallBtn");
+    var muteBtn = document.getElementById("voMuteBtn");
+    var privBtn = document.getElementById("voPrivBtn");
+    var spkBtn = document.getElementById("voSpkBtn");
+    var backBtn = document.getElementById("voBackBtn");
+    /* ===== 开源版改造：不再依赖任何后端，直接打你自己填的 API ===== */
+    var CFG_KEY = "voicecall.full.settings.v1";
+    var DEFAULT_SYS = "你是一个简洁的对话伙伴，回答口语化、便于朗读，控制在两三句之内。";
+    var cfg = { base: "", apiKey: "", model: "", sys: "", rate: 1 };
+    try { var _raw = JSON.parse(localStorage.getItem(CFG_KEY) || "{}"); for (var _k in cfg) if (_raw[_k] !== undefined) cfg[_k] = _raw[_k]; } catch (e) {}
+    function saveCfg() { try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (e) {} }
+    var history = [];
+    ov.classList.add("open");
+    setTimeout(function () { if (typeof resize === "function") resize(); }, 0);
+
+    var callOpen = false, muted = false, privateMode = false, speakerOn = true;
+    var recognition = null, wantRec = false, restartTimer = null;
+    var ttsSpeaking = false, ttsPulse = 0, ttsNoise = 0;
+    var micStream = null, audioCtx = null, analyser = null, freqData = null;
+    var replyTimer = null, callId = null, callStartAt = 0;
+    var senseFrames = [], senseTimer = null;
+    var FALLBACK = ["嗯，我在听", "好，我懂", "继续说，我在呢", "嗯…我在", "好呀，然后呢"];
+
+    function setCaption(t) { capEl.textContent = t || ""; capWrap.classList.toggle("show", !!t); }
+    function setStatus(t, live) { statusEl.textContent = t; statusEl.classList.toggle("live", !!live); }
+
+    /* ---------- 音频 ---------- */
+    function ensureAudio() {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        if (!audioCtx) {
+            audioCtx = new AC();
+            analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 512;
+            analyser.smoothingTimeConstant = .85;
+            freqData = new Uint8Array(analyser.frequencyBinCount);
+        }
+        if (audioCtx.state === "suspended") audioCtx.resume();
+    }
+    function acquireMic() {
+        if (micStream) return Promise.resolve(micStream);
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return Promise.reject(1);
+        return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(function (st) {
+            micStream = st;
+            ensureAudio();
+            if (audioCtx && analyser) { try { audioCtx.createMediaStreamSource(st).connect(analyser); } catch (e) {} }
+            return st;
+        });
+    }
+    function releaseMic() {
+        if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; }
+    }
+
+    /* ---------- 识别 ---------- */
+    function startRecognition() {
+        var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) { setStatus("当前浏览器不支持语音识别", false); return; }
+        wantRec = true;
+        recognition = new SR();
+        recognition.lang = "zh-CN";
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.onresult = function (e) {
+            var interim = "";
+            for (var i = e.resultIndex; i < e.results.length; i++) {
+                var piece = ((e.results[i][0] && e.results[i][0].transcript) || "").trim();
+                if (e.results[i].isFinal) handleFinal(piece); else interim += piece;
+            }
+            if (interim) setCaption(interim);
+        };
+        recognition.onend = function () {
+            if (callOpen && wantRec && !muted && !ttsSpeaking) {
+                restartTimer = setTimeout(function () { try { recognition && recognition.start(); } catch (e) {} }, 450);
+            }
+        };
+        try { recognition.start(); } catch (e) {}
+    }
+    function stopRecognition() {
+        wantRec = false;
+        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+        if (recognition) { try { recognition.onend = null; recognition.stop(); } catch (e) {} recognition = null; }
+    }
+
+    /* ---------- 声学感知（私密模式） ---------- */
+    function startSense() {
+        if (senseTimer) return;
+        senseTimer = setInterval(function () {
+            if (!privateMode || !analyser) return;
+            analyser.getByteFrequencyData(freqData);
+            var sum = 0, max = 0, maxIdx = 0, n = freqData.length;
+            for (var i = 0; i < n; i++) { sum += freqData[i]; if (freqData[i] > max) { max = freqData[i]; maxIdx = i; } }
+            senseFrames.push({ volume: sum / n / 255, pitch: Math.round(maxIdx * (audioCtx.sampleRate / analyser.fftSize)) });
+            if (senseFrames.length > 80) senseFrames.shift();
+        }, 400);
+    }
+    function stopSense() { if (senseTimer) { clearInterval(senseTimer); senseTimer = null; } senseFrames = []; }
+    function flushSense() {
+        var f = senseFrames; senseFrames = [];
+        if (!f.length) return "";
+        var vS = 0, vM = 0, pS = 0, pC = 0;
+        for (var i = 0; i < f.length; i++) { vS += f[i].volume; if (f[i].volume > vM) vM = f[i].volume; if (f[i].pitch > 0) { pS += f[i].pitch; pC++; } }
+        return "\n[audio] vol=" + (vS / f.length).toFixed(3) + "/" + vM.toFixed(3) + " pitch=" + (pC ? Math.round(pS / pC) : 0) + "Hz frames=" + f.length;
+    }
+
+    /* ---------- 上行：说话 -> 后端 ---------- */
+    function handleFinal(text) {
+        if (!text) return;
+        setCaption(text);
+        setStatus("他在听……", true);
+        var sense = privateMode ? flushSense() : "";
+        if (replyTimer) clearTimeout(replyTimer);
+        replyTimer = setTimeout(function () { askBackend(text + sense); }, 350);
+    }
+    function askBackend(text) {
+        if (!callOpen) return;
+        if (!cfg.base || !cfg.apiKey || !cfg.model) {
+            speak("还没有配置接口。点右上角的齿轮，填上 API 地址、Key 和模型名。");
+            return;
+        }
+        var msgs = [{ role: "system", content: (cfg.sys && cfg.sys.trim()) || DEFAULT_SYS }];
+        for (var hi = 0; hi < history.length; hi++) msgs.push(history[hi]);
+        history.push({ role: "user", content: text });
+        var url = cfg.base.replace(new RegExp("/+$"), "") + "/chat/completions";
+        fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + cfg.apiKey },
+            body: JSON.stringify({ model: cfg.model, messages: msgs })
+        }).then(function (r) {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            return r.json();
+        }).then(function (j) {
+            var reply = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+            reply = String(reply || "").replace(new RegExp("<think[\\s\\S]*?<\\/think>", "gi"), "").trim();
+            if (reply) {
+                history.push({ role: "assistant", content: reply });
+                if (history.length > 40) history.splice(0, history.length - 40);
+                speak(reply);
+            } else { speak(FALLBACK[Math.floor(Math.random() * FALLBACK.length)]); }
+        }).catch(function (e) {
+            var m = String(e && e.message || "");
+            if (m.indexOf("HTTP") === 0) speak("接口返回了错误：" + m + "，检查一下 Key 和模型名。");
+            else speak("请求发不出去。可能是这个接口不允许网页直接调用，或者地址填错了。");
+        });
+    }
+
+    /* ---------- 下行：说话给她听 ---------- */
+    function speak(text) {
+        stopRecognition();
+        ttsSpeaking = true;
+        setCaption(text);
+        setStatus("他在说…", true);
+        function done() {
+            ttsSpeaking = false;
+            if (callOpen) {
+                setStatus(muted ? "他在等你说……" : "正在聆听…", true);
+                setTimeout(function () { if (callOpen && !muted) startRecognition(); }, 250);
+            } else { setStatus("无声 · 呼吸", false); }
+        }
+        if (speakerOn && window.speechSynthesis) {
+            speechSynthesis.cancel();
+            var u = new SpeechSynthesisUtterance(text);
+            u.lang = "zh-CN"; u.rate = cfg.rate || 1; u.pitch = 1;
+            u.onboundary = function () { ttsPulse = 1; };
+            u.onend = done; u.onerror = done;
+            speechSynthesis.speak(u);
+        } else {
+            setTimeout(done, Math.min(3000, 600 + text.length * 95));
+        }
+    }
+
+    /* ---------- 开关 ---------- */
+    function openCall() {
+        if (callOpen) return;
+        callOpen = true;
+        callId = "c" + Date.now();
+        callStartAt = Date.now();
+        callBtn.classList.add("active");
+        ensureAudio();
+        acquireMic().catch(function () { setStatus("拿不到麦克风，检查权限或换 https 打开", false); });
+        setCaption("");
+        inputBar.classList.remove("show");
+        setStatus(muted ? "他在等你说……" : "正在聆听…", true);
+        if (!muted) startRecognition();
+        if (privateMode) startSense();
+        /* 开源版：不再向任何后端上报通话开始 */
+    }
+    function closeCall() {
+        if (!callOpen) return;
+        callOpen = false;
+        callBtn.classList.remove("active");
+        stopRecognition();
+        stopSense();
+        releaseMic();
+        if (window.speechSynthesis) speechSynthesis.cancel();
+        ttsSpeaking = false;
+        if (replyTimer) { clearTimeout(replyTimer); replyTimer = null; }
+        setCaption("");
+        inputBar.classList.remove("show");
+        if (inputEl) inputEl.value = "";
+        refreshSend();
+        setStatus("无声 · 呼吸", false);
+        history.length = 0;
+        var dur = Math.round((Date.now() - callStartAt) / 1000);
+        /* 开源版：通话时长只留在本地，不上报 */
+    }
+
+    /* ---------- 入口 ---------- */
+    var inputBar = document.getElementById("voInputBar");
+    var inputEl = document.getElementById("voInput");
+    var sendBtn = document.getElementById("voSendBtn");
+
+    function setMode() {
+        if (!callOpen) { inputBar.classList.remove("show"); return; }
+        inputBar.classList.toggle("show", !!muted);
+        if (muted) setStatus("他在等你说……", true);
+    }
+    function refreshSend() {
+        sendBtn.classList.toggle("on", !!(inputEl.value || "").trim());
+    }
+    function sendTyped() {
+        var t = (inputEl.value || "").trim();
+        if (!t) return;
+        inputEl.value = "";
+        refreshSend();
+        handleFinal(t);
+    }
+    inputEl.addEventListener("input", refreshSend);
+    inputEl.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); sendTyped(); } });
+    sendBtn.addEventListener("click", sendTyped);
+
+    var entry = document.getElementById("callTopBtn");
+    if (entry) entry.addEventListener("click", function () { ov.classList.add("open"); });
+    backBtn.addEventListener("click", function () { closeCall(); });
+    callBtn.addEventListener("click", function () { if (callOpen) closeCall(); else openCall(); });
+    muteBtn.addEventListener("click", function () {
+        if (!callOpen) return;
+        muted = !muted;
+        muteBtn.classList.toggle("active", muted);
+        if (micStream) micStream.getAudioTracks().forEach(function (t) { t.enabled = !muted; });
+        if (muted) { stopRecognition(); setMode(); if (inputEl) { try { inputEl.focus(); } catch (e) {} } }
+        else if (!ttsSpeaking) { setMode(); startRecognition(); setStatus("正在聆听…", true); }
+    });
+    privBtn.addEventListener("click", function () {
+        privateMode = !privateMode;
+        privBtn.classList.toggle("active", privateMode);
+        if (privateMode && callOpen) startSense(); else stopSense();
+    });
+    spkBtn.addEventListener("click", function () {
+        speakerOn = !speakerOn;
+        spkBtn.classList.toggle("active", !speakerOn);
+    });
+
+    /* ---------- 球 ---------- */
+    var cw = 0, ch = 0, DPR = 1;
+    function resize() {
+        var w = canvas.clientWidth || canvas.parentNode.clientWidth;
+        var h = canvas.clientHeight || canvas.parentNode.clientHeight;
+        if (!w || !h) return;
+        DPR = Math.min(window.devicePixelRatio || 1, 2);
+        cw = w; ch = h;
+        canvas.width = Math.round(cw * DPR); canvas.height = Math.round(ch * DPR);
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    window.addEventListener("resize", resize);
+    var particles = [];
+    for (var p = 0; p < 44; p++) particles.push({ a: Math.random() * Math.PI * 2, spd: (Math.random() - .5) * .2, r: Math.random(), size: .7 + Math.random() * 1.6, alpha: .05 + Math.random() * .13 });
+    var eSmooth = 0, eSlow = 0, scale = 1;
+    function getEnergy() {
+        if (ttsSpeaking) { ttsPulse *= .86; ttsNoise = ttsNoise * .8 + Math.random() * .12; return Math.min(1, (ttsPulse * .85 + ttsNoise * .4) * .9); }
+        if (analyser) {
+            analyser.getByteFrequencyData(freqData);
+            var sum = 0, n = freqData.length;
+            for (var i = 0; i < n; i++) sum += freqData[i];
+            return Math.min(1, (sum / n / 255) * 2.2 * (muted ? 0 : 1));
+        }
+        return 0;
+    }
+    function draw() {
+        requestAnimationFrame(draw);
+        if (!ov.classList.contains("open")) return;
+        if (!cw || !ch) { resize(); if (!cw || !ch) return; }
+        var t = performance.now() / 1000;
+        var raw = getEnergy();
+        eSmooth += (raw - eSmooth) * .05;
+        eSlow += (eSmooth - eSlow) * .28;
+        var breathe = 1 + Math.sin(t * 1.4) * .02;
+        scale += (breathe - scale) * .06;
+        ctx.clearRect(0, 0, cw, ch);
+        var cx = cw / 2, cy = ch / 2 + Math.sin(t * .8) * cw * .015;
+        var R = Math.min(cw, ch) * .34 * .7 * (1.2) * scale;
+        var spread = 1 + eSlow;
+        var g0 = ctx.createRadialGradient(cx, cy, R * .3, cx, cy, R * 1.9 * spread);
+        g0.addColorStop(0, "rgba(12,12,12," + (.07 + eSlow * .13) + ")");
+        g0.addColorStop(.5, "rgba(12,12,12," + (.035 + eSlow * .065) + ")");
+        g0.addColorStop(1, "rgba(12,12,12,0)");
+        ctx.fillStyle = g0; ctx.beginPath(); ctx.arc(cx, cy, R * 1.9 * spread, 0, Math.PI * 2); ctx.fill();
+        var g1 = ctx.createRadialGradient(cx, cy, R * .02, cx, cy, R * 1.05);
+        g1.addColorStop(0, "rgba(12,12,12," + (.36 + eSlow * .20) + ")");
+        g1.addColorStop(.42, "rgba(18,18,18," + (.24 + eSlow * .16) + ")");
+        g1.addColorStop(.78, "rgba(10,10,10," + (.10 + eSlow * .09) + ")");
+        g1.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g1; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+        var gH = ctx.createRadialGradient(cx - R * .3, cy - R * .35, 0, cx - R * .3, cy - R * .35, R * .7);
+        gH.addColorStop(0, "rgba(255,255,255," + (.07 + eSmooth * .05) + ")");
+        gH.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = gH; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+        for (var k = 0; k < particles.length; k++) {
+            var pt = particles[k], a = pt.a + t * pt.spd, rad = R * (.25 + pt.r * .6) * (1 + eSlow * .9);
+            ctx.fillStyle = "rgba(90,90,90," + pt.alpha + ")";
+            ctx.beginPath(); ctx.arc(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad * .9, pt.size, 0, Math.PI * 2); ctx.fill();
+        }
+    }
+    requestAnimationFrame(draw);
+
+    /* ---------- 设置面板 ---------- */
+    var gearBtn = document.getElementById("voGear");
+    var setPanel = document.getElementById("voSettings");
+    function fillSettings() {
+        document.getElementById("voBase").value = cfg.base;
+        document.getElementById("voKey").value = cfg.apiKey;
+        document.getElementById("voModel").value = cfg.model;
+        document.getElementById("voSys").value = cfg.sys;
+        document.getElementById("voRate").value = Math.round((cfg.rate || 1) * 100);
+        document.getElementById("voRateVal").textContent = (cfg.rate || 1).toFixed(2);
+    }
+    if (gearBtn) gearBtn.addEventListener("click", function () {
+        var open = setPanel.classList.toggle("open");
+        if (open) fillSettings();
+    });
+    document.getElementById("voClose").addEventListener("click", function () { setPanel.classList.remove("open"); });
+    document.getElementById("voSave").addEventListener("click", function () {
+        cfg.base = document.getElementById("voBase").value.trim();
+        cfg.apiKey = document.getElementById("voKey").value.trim();
+        cfg.model = document.getElementById("voModel").value.trim();
+        cfg.sys = document.getElementById("voSys").value;
+        cfg.rate = parseFloat(document.getElementById("voRate").value) / 100;
+        saveCfg();
+        setPanel.classList.remove("open");
+        setStatus("设置已保存", false);
+    });
+    document.getElementById("voRate").addEventListener("input", function () {
+        document.getElementById("voRateVal").textContent = (parseFloat(this.value) / 100).toFixed(2);
+    });
+
+    }
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", __voBoot);
+    } else {
+        __voBoot();
+    }
+})();
+</script>
+</body>
+</html>
